@@ -41,22 +41,16 @@ export const registerUser = async (
   email: string, 
   password: string
 ): Promise<AuthResponse> => {
-  console.log(`[AUTH_SERVICE] Iniciando registro para: ${email}`);
-  
   // Verificar si el usuario existe
-  console.log(`[AUTH_SERVICE] Verificando si el usuario ya existe: ${email}`);
   const existingUser = await prisma.users.findUnique({ where: { email } });
   if (existingUser) {
-    console.log(`[AUTH_SERVICE] Error: El correo ${email} ya está registrado`);
     throw createError('El correo electrónico ya está registrado', 400, 'AUTH_ERROR');
   }
 
   // Hashear la contraseña
-  console.log(`[AUTH_SERVICE] Hasheando contraseña para: ${email}`);
   const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
   
   // Crear el usuario
-  console.log(`[AUTH_SERVICE] Creando usuario en la base de datos: ${email}`);
   const user = await prisma.users.create({
     data: { 
       name, 
@@ -66,17 +60,12 @@ export const registerUser = async (
       role: 'USER' // Rol por defecto
     },
   });
-  
-  console.log(`[AUTH_SERVICE] Usuario creado con ID: ${user.id}`);
 
   // Generar token JWT - Asegurarse de que el ID sea un string
-  console.log(`[AUTH_SERVICE] Generando token JWT para el usuario ID: ${user.id}`);
   const token = generateToken(user.id.toString(), user.role);
   
   // Devolver token y datos del usuario (sin la contraseña)
   const { password_hash: __, ...userWithoutPassword } = user;
-  
-  console.log(`[AUTH_SERVICE] Registro completado para: ${email}`);
   return { token, user: userWithoutPassword };
 };
 
@@ -90,44 +79,31 @@ export const loginUser = async (
   email: string, 
   password: string
 ): Promise<AuthResponse> => {
-  console.log(`[AUTH_SERVICE] Iniciando proceso de login para: ${email}`);
-  
   // Buscar usuario
-  console.log(`[AUTH_SERVICE] Buscando usuario: ${email}`);
   const user = await prisma.users.findUnique({ where: { email } });
   
   // Verificar si el usuario existe
   if (!user) {
-    console.log(`[AUTH_SERVICE] Error: No existe cuenta para el correo: ${email}`);
     throw createError('No existe una cuenta con este correo electrónico', 401, 'AUTH_ERROR');
   }
   
-  console.log(`[AUTH_SERVICE] Usuario encontrado. ID: ${user.id}, Proveedor: ${user.auth_provider}`);
-  
   // Verificar si el usuario usa autenticación local
   if (user.auth_provider !== AuthProvider.LOCAL) {
-    console.log(`[AUTH_SERVICE] Error: Método de autenticación incorrecto para: ${email}. Usa: ${user.auth_provider}`);
     throw createError('Por favor, inicia sesión con el método de autenticación correcto', 401, 'AUTH_ERROR');
   }
 
   // Verificar la contraseña
-  console.log(`[AUTH_SERVICE] Verificando contraseña para: ${email}`);
   const passwordToCompare = user.password_hash || '';
   const isPasswordValid = await bcrypt.compare(password, passwordToCompare);
-  
   if (!isPasswordValid) {
-    console.log(`[AUTH_SERVICE] Error: Contraseña incorrecta para: ${email}`);
     throw createError('Contraseña incorrecta', 401, 'AUTH_ERROR');
   }
 
   // Generar token JWT - Asegurarse de que el ID sea un string
-  console.log(`[AUTH_SERVICE] Generando token JWT para el usuario ID: ${user.id}`);
   const token = generateToken(user.id.toString(), user.role);
   
   // Devolver token y datos del usuario (sin la contraseña)
   const { password_hash, ...userWithoutPassword } = user;
-  
-  console.log(`[AUTH_SERVICE] Autenticación exitosa para: ${email}`);
   return { token, user: userWithoutPassword };
 };
 
@@ -234,8 +210,6 @@ export const findOrCreateGoogleUser = async (
  * Genera un token JWT para el usuario
  */
 const generateToken = (userId: string, role: string): string => {
-  console.log(`[AUTH_SERVICE] Generando token para userId: ${userId}, rol: ${role}`);
-  
   // Asegurarse de que userId sea un string
   const userIdStr = String(userId);
   const payload = { 
@@ -250,14 +224,6 @@ const generateToken = (userId: string, role: string): string => {
     algorithm: 'HS256' as const
   };
   
-  console.log(`[AUTH_SERVICE] Payload del token:`, JSON.stringify(payload));
-  
-  try {
-    const token = jwt.sign(payload as object, JWT_SECRET, options);
-    console.log(`[AUTH_SERVICE] Token generado exitosamente`);
-    return token;
-  } catch (error) {
-    console.error(`[AUTH_SERVICE] Error al generar el token:`, error);
-    throw error;
-  }
+  // Usar una aserción de tipo para el payload
+  return jwt.sign(payload as object, JWT_SECRET, options);
 };
