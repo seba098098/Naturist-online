@@ -1,40 +1,66 @@
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import { PrismaClient, AuthProvider, Role } from '@prisma/client';
-import { createError } from '../middleware/errorHandler';
+/**
+ * Servicio de autenticación
+ * Maneja la lógica de negocio relacionada con la autenticación de usuarios:
+ * - Registro de nuevos usuarios
+ * - Inicio de sesión con credenciales locales
+ * - Autenticación con proveedores OAuth (Google)
+ * - Gestión de tokens JWT
+ * - Restablecimiento de contraseñas
+ */
 
-const prisma = new PrismaClient();
+// Importación de dependencias
+import bcrypt from 'bcrypt'; // Para hashear y comparar contraseñas
+import jwt from 'jsonwebtoken'; // Para generar y verificar tokens JWT
+import { PrismaClient, AuthProvider, Role } from '@prisma/client'; // Tipos de Prisma
+import { createError } from '../middleware/errorHandler'; // Utilidad para crear errores personalizados
 
+// Inicialización del cliente de Prisma para interactuar con la base de datos
+const prisma = new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error']
+});
+
+/**
+ * Interfaz que representa un usuario en el sistema
+ * Incluye todos los campos relevantes de la entidad User de Prisma
+ */
 type User = {
-  id: number;
-  name: string;
-  email: string;
-  password_hash: string;
-  role: Role;
-  auth_provider: AuthProvider;
-  created_at: Date;
-  updated_at: Date;
-  avatar_url?: string | null;
-  email_verified?: boolean;
+  id: number;                     // Identificador único del usuario
+  name: string;                   // Nombre completo del usuario
+  email: string;                  // Correo electrónico (único)
+  password_hash: string;          // Hash de la contraseña (solo para autenticación local)
+  role: Role;                     // Rol del usuario (ADMIN, USER, etc.)
+  auth_provider: AuthProvider;    // Proveedor de autenticación (LOCAL, GOOGLE, etc.)
+  created_at: Date;               // Fecha de creación del usuario
+  updated_at: Date;               // Fecha de última actualización
+  avatar_url?: string | null;     // URL de la imagen de perfil (opcional)
+  email_verified?: boolean;       // Indica si el correo electrónico ha sido verificado
 };
 
-// Variables de entorno
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
-const SALT_ROUNDS = 10;
+/**
+ * Configuración de la autenticación
+ * Las variables de entorno tienen valores por defecto para desarrollo,
+ * pero deben configurarse en producción.
+ */
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'; // Clave secreta para firmar los tokens JWT
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';     // Tiempo de expiración de los tokens
+const SALT_ROUNDS = 10; // Número de rondas de hashing para bcrypt (mayor = más seguro pero más lento)
 
-// Tipos
+/**
+ * Interfaz para la respuesta de autenticación
+ * Contiene el token JWT y los datos del usuario (sin la contraseña)
+ */
 export interface AuthResponse {
-  token: string;
-  user: Omit<User, 'password_hash'>;
+  token: string;                     // Token JWT para autenticación
+  user: Omit<User, 'password_hash'>;  // Datos del usuario sin la contraseña
 }
 
 /**
- * Registra un nuevo usuario local
- * - Verifica si el email ya existe
- * - Hashea la contraseña
- * - Crea el usuario en la base de datos
- * - Genera y devuelve un token JWT
+ * Registra un nuevo usuario en el sistema con autenticación local
+ * @param name - Nombre completo del usuario
+ * @param email - Correo electrónico (debe ser único)
+ * @param password - Contraseña en texto plano (será hasheada)
+ * @returns Promesa que resuelve con el token JWT y los datos del usuario
+ * @throws {Error} Si el correo ya está registrado o hay un error en el servidor
  */
 export const registerUser = async (
   name: string, 
@@ -81,10 +107,11 @@ export const registerUser = async (
 };
 
 /**
- * Autentica a un usuario local
- * - Busca al usuario por email
- * - Verifica la contraseña
- * - Genera y devuelve un token JWT
+ * Autentica a un usuario con credenciales locales (email/contraseña)
+ * @param email - Correo electrónico del usuario
+ * @param password - Contraseña en texto plano
+ * @returns Promesa que resuelve con el token JWT y los datos del usuario
+ * @throws {Error} Si las credenciales son incorrectas, el usuario no existe o hay un error
  */
 export const loginUser = async (
   email: string, 
@@ -133,6 +160,9 @@ export const loginUser = async (
 
 /**
  * Obtiene el perfil de un usuario por su ID
+ * @param userId - ID del usuario cuyo perfil se desea obtener
+ * @returns Promesa que resuelve con los datos del perfil del usuario (sin la contraseña)
+ * @throws {Error} Si el usuario no existe o hay un error en la base de datos
  */
 export const getUserProfile = async (userId: number) => {
   // Buscar usuario por ID
@@ -153,9 +183,11 @@ export const getUserProfile = async (userId: number) => {
 };
 
 /**
- * Restablece la contraseña de un usuario local
- * - Verifica que el usuario exista y sea local
- * - Actualiza la contraseña con el nuevo hash
+ * Restablece la contraseña de un usuario con autenticación local
+ * @param email - Correo electrónico del usuario
+ * @param newPassword - Nueva contraseña en texto plano (será hasheada)
+ * @returns Promesa que resuelve cuando la contraseña ha sido actualizada
+ * @throws {Error} Si el usuario no existe, no usa autenticación local o hay un error
  */
 export const resetUserPassword = async (email: string, newPassword: string): Promise<void> => {
   // Buscar usuario
@@ -177,10 +209,12 @@ export const resetUserPassword = async (email: string, newPassword: string): Pro
 };
 
 /**
- * Encuentra o crea un usuario usando Google OAuth
- * - Busca por email
- * - Crea el usuario si no existe
- * - Genera y devuelve un token JWT
+ * Busca un usuario por su correo electrónico o lo crea si no existe (para OAuth)
+ * @param email - Correo electrónico del usuario
+ * @param name - Nombre completo del usuario
+ * @param avatar - URL de la imagen de perfil (opcional)
+ * @returns Promesa que resuelve con el token JWT y los datos del usuario
+ * @throws {Error} Si hay un error al buscar o crear el usuario
  */
 export const findOrCreateGoogleUser = async (
   email: string, 
@@ -231,13 +265,18 @@ export const findOrCreateGoogleUser = async (
 };
 
 /**
- * Genera un token JWT para el usuario
+ * Genera un token JWT para un usuario autenticado
+ * @param userId - ID del usuario (se convierte a string si es necesario)
+ * @param role - Rol del usuario para incluir en el payload del token
+ * @returns Token JWT firmado
+ * @throws {Error} Si hay un error al generar el token
  */
-const generateToken = (userId: string, role: string): string => {
+function generateToken(userId: string | number, role: string): string {
+  // Asegurarse de que el userId sea un string
+  const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
   console.log(`[AUTH_SERVICE] Generando token para userId: ${userId}, rol: ${role}`);
   
-  // Asegurarse de que userId sea un string
-  const userIdStr = String(userId);
+  // Crear payload del token
   const payload = { 
     userId: userIdStr, 
     role,

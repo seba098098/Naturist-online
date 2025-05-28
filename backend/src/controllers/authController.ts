@@ -1,14 +1,33 @@
-import { Request, Response, NextFunction } from 'express';
-import { OAuth2Client } from 'google-auth-library';
-import * as authService from '../services/authService';
-import { validationError, unauthorized, createError, ERROR_TYPES } from '../middleware/errorHandler';
+/**
+ * Controlador de autenticación
+ * Maneja las peticiones HTTP relacionadas con la autenticación:
+ * - Registro de usuarios
+ * - Inicio de sesión con credenciales locales
+ * - Autenticación con Google OAuth
+ * - Cierre de sesión
+ * - Obtención de perfil de usuario
+ * - Restablecimiento de contraseña
+ */
 
-// Configuración del cliente Google OAuth
+// Importación de dependencias
+import { Request, Response, NextFunction } from 'express'; // Tipos de Express
+import { OAuth2Client } from 'google-auth-library'; // Cliente de Google OAuth
+import * as authService from '../services/authService'; // Servicio de autenticación
+import { createError, unauthorized, ERROR_TYPES } from '../middleware/errorHandler'; // Utilidades para manejo de errores
+
+/**
+ * Configuración del cliente de Google OAuth
+ * Se utiliza para verificar los tokens de autenticación de Google
+ */
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 /**
- * Maneja la lógica de registro
+ * Controlador para el registro de nuevos usuarios
+ * @param req - Objeto de solicitud de Express
+ * @param res - Objeto de respuesta de Express
+ * @param next - Función para pasar al siguiente middleware
+ * @returns Respuesta JSON con el token JWT y los datos del usuario
  */
 export const registerHandler = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -43,7 +62,11 @@ export const registerHandler = async (req: Request, res: Response, next: NextFun
 };
 
 /**
- * Maneja la lógica de inicio de sesión
+ * Controlador para el inicio de sesión con credenciales locales
+ * @param req - Objeto de solicitud de Express (debe contener email y password)
+ * @param res - Objeto de respuesta de Express
+ * @param next - Función para pasar al siguiente middleware
+ * @returns Respuesta JSON con el token JWT y los datos del usuario
  */
 export const loginHandler = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -103,7 +126,11 @@ export const loginHandler = async (req: Request, res: Response, next: NextFuncti
 };
 
 /**
- * Cierra la sesión del usuario
+ * Controlador para cerrar la sesión del usuario
+ * Elimina la cookie de autenticación
+ * @param _req - Objeto de solicitud de Express
+ * @param res - Objeto de respuesta de Express
+ * @returns Respuesta JSON indicando éxito
  */
 export const logout = (_req: Request, res: Response) => {
   res.clearCookie('token');
@@ -111,7 +138,11 @@ export const logout = (_req: Request, res: Response) => {
 };
 
 /**
- * Obtiene el perfil del usuario autenticado
+ * Controlador para obtener el perfil del usuario autenticado
+ * @param req - Objeto de solicitud de Express (debe contener el usuario en req.user)
+ * @param res - Objeto de respuesta de Express
+ * @param next - Función para pasar al siguiente middleware
+ * @returns Respuesta JSON con los datos del perfil del usuario
  */
 export const getProfile = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -122,7 +153,7 @@ export const getProfile = async (req: Request, res: Response, next: NextFunction
     
     const user = await authService.getUserProfile(userId);
     if (!user) {
-      return next(createError('Usuario no encontrado', 404, 'NOT_FOUND'));
+      return next(unauthorized('No autorizado'));
     }
     
     res.status(200).json({
@@ -141,8 +172,11 @@ export const getProfile = async (req: Request, res: Response, next: NextFunction
 };
 
 /**
- * Controlador para restablecer contraseña
- * Valida el token y actualiza la contraseña
+ * Controlador para restablecer la contraseña de un usuario
+ * @param req - Objeto de solicitud de Express (debe contener email y newPassword)
+ * @param res - Objeto de respuesta de Express
+ * @param next - Función para pasar al siguiente middleware
+ * @returns Respuesta JSON indicando éxito o error
  */
 export const resetPassword = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -159,8 +193,12 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
 };
 
 /**
- * Controlador para login con Google OAuth
- * Verifica token con Google, crea usuario si no existe y responde JWT
+ * Controlador para el inicio de sesión con Google OAuth
+ * Verifica el token de Google, crea el usuario si no existe y genera un JWT
+ * @param req - Objeto de solicitud de Express (debe contener un token de Google)
+ * @param res - Objeto de respuesta de Express
+ * @param next - Función para pasar al siguiente middleware
+ * @returns Respuesta JSON con el token JWT y los datos del usuario
  */
 export const loginWithGoogle = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -176,7 +214,7 @@ export const loginWithGoogle = async (req: Request, res: Response, next: NextFun
     
     const payload = ticket.getPayload();
     if (!payload?.email) {
-      return next(createError('Token de Google inválido', 400, 'AUTH_ERROR'));
+return next(createError('Token de Google inválido', 400, ERROR_TYPES.UNAUTHORIZED));
     }
 
     const { token: jwtToken, user } = await authService.findOrCreateGoogleUser(

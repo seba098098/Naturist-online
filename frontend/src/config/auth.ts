@@ -1,10 +1,14 @@
+// Importaciones de NextAuth y tipos necesarios
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import Google from 'next-auth/providers/google';
 import type { NextAuthConfig, DefaultSession } from 'next-auth';
 import type { JWT as DefaultJWT } from 'next-auth/jwt';
 
-// Tipos personalizados
+/**
+ * Interfaz para el usuario personalizado
+ * Extiende el tipo de usuario por defecto con campos adicionales
+ */
 interface CustomUser {
   id: string;
   name?: string | null;
@@ -14,40 +18,56 @@ interface CustomUser {
   accessToken?: string;
 }
 
+/**
+ * Interfaz para la sesión personalizada
+ * Incluye el token de acceso y el usuario personalizado
+ */
 interface CustomSession extends DefaultSession {
   user: CustomUser;
   accessToken?: string;
 }
 
+/**
+ * Interfaz para el token JWT personalizado
+ * Almacena información del usuario y tokens
+ */
+/**
+ * Interfaz para el token JWT personalizado
+ * Extiende el tipo JWT por defecto con campos adicionales
+ */
 interface CustomJWT extends DefaultJWT {
+  /** ID único del usuario */
   id: string;
+  
+  /** Nombre para mostrar del usuario */
   name?: string | null;
+  
+  /** Correo electrónico del usuario */
   email?: string | null;
+  
+  /** URL de la imagen de perfil del usuario */
   image?: string | null;
-  role?: string;
+  
+  /** Rol del usuario (valor por defecto: 'user') */
+  role: string;
+  
+  /** Token de acceso para autenticación con la API */
   accessToken?: string;
 }
 
-// URL base de la API
+// Configuración de la URL de la API
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-// Extender tipos de NextAuth
+/**
+ * Extensión de tipos de NextAuth para TypeScript
+ * Esto nos permite tener tipado fuerte en toda la aplicación
+ */
 declare module 'next-auth' {
-  /**
-   * Extiende la interfaz de usuario por defecto
-   */
   interface User extends CustomUser {}
-
-  /**
-   * Extiende la interfaz de sesión por defecto
-   */
   interface Session extends CustomSession {}
 }
 
 declare module 'next-auth/jwt' {
-  /**
-   * Extiende la interfaz JWT por defecto
-   */
   interface JWT extends CustomJWT {}
 }
 
@@ -205,42 +225,74 @@ export const authConfig: NextAuthConfig = {
     updateAge: 24 * 60 * 60, // 24 horas
   },
   
-  // Callbacks
+  // Callbacks para personalizar el comportamiento de autenticación
   callbacks: {
-    async jwt({ token, user, account }): Promise<CustomJWT> {
-      const customToken = token as CustomJWT;
-      
-      // Pasar datos del usuario al token
+    /**
+     * Callback que se ejecuta cuando se genera un JWT
+     * Se usa para personalizar el token con información adicional del usuario
+     * @param params - Parámetros del callback JWT
+     * @param params.token - Token JWT actual
+     * @param params.user - Información del usuario (disponible durante el inicio de sesión)
+     * @param params.account - Información de la cuenta del proveedor (OAuth)
+     * @returns Token JWT actualizado
+     */
+    async jwt({ token, user, account }) {
+      // Si hay un usuario (durante el inicio de sesión)
       if (user) {
-        customToken.id = user.id;
-        customToken.name = user.name || null;
-        customToken.email = user.email || null;
-        customToken.image = user.image || null;
-        customToken.role = (user as CustomUser).role || 'user';
-        customToken.accessToken = (user as CustomUser).accessToken;
+        const customUser = user as CustomUser;
+        return {
+          ...token,
+          id: user.id,
+          name: user.name || null,
+          email: user.email || null,
+          image: user.image || null,
+          role: customUser.role || 'user', // Valor por defecto 'user'
+          accessToken: customUser.accessToken || account?.access_token || token.accessToken,
+        };
       }
       
-      // Si hay un token de acceso de la cuenta (por ejemplo, de Google)
+      // Si hay un token de acceso de la cuenta (ej: Google OAuth)
       if (account?.access_token) {
-        customToken.accessToken = account.access_token;
+        return {
+          ...token,
+          accessToken: account.access_token,
+          // Asegurarse de que siempre haya un rol
+          role: (token as CustomJWT).role || 'user',
+        };
       }
       
-      return customToken;
+      // Mantener el token existente, asegurando que tenga un rol
+      return {
+        ...token,
+        role: (token as CustomJWT).role || 'user',
+      };
     },
     
-    async session({ session, token }): Promise<CustomSession> {
-      const customSession = session as CustomSession;
+    /**
+     * Callback que se ejecuta cuando se crea o actualiza una sesión
+     * Se usa para personalizar el objeto de sesión que se envía al cliente
+     * @param params - Parámetros del callback de sesión
+     * @param params.session - Sesión actual
+     * @param params.token - Token JWT actual
+     * @returns Sesión personalizada
+     */
+    async session({ session, token }) {
+      // Asegurarse de que token tenga el tipo correcto
       const customToken = token as CustomJWT;
       
-      // Pasar datos del token a la sesión
-      if (customSession.user) {
-        customSession.user.id = customToken.id;
-        customSession.user.name = customToken.name;
-        customSession.user.email = customToken.email || '';
-        customSession.user.image = customToken.image;
-        customSession.user.role = customToken.role;
-        customSession.accessToken = customToken.accessToken;
-      }
+      // Crear una copia segura de la sesión con los datos actualizados
+      const customSession = {
+        ...session,
+        user: {
+          ...session.user,
+          id: customToken.id,
+          name: customToken.name,
+          email: customToken.email || '',
+          image: customToken.image || null,
+          role: customToken.role || 'user', // Valor por defecto 'user'
+        },
+        accessToken: customToken.accessToken,
+      };
       
       return customSession;
     },

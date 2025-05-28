@@ -1,26 +1,48 @@
-import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { createError, unauthorized } from './errorHandler';
+/**
+ * Módulo de middleware de autenticación
+ * Proporciona middlewares para:
+ * - Verificación de tokens JWT
+ * - Control de acceso basado en roles
+ * - Verificación de propiedad de recursos
+ */
 
+// Importación de dependencias
+import { Request, Response, NextFunction } from 'express'; // Tipos de Express
+import jwt from 'jsonwebtoken'; // Para verificar tokens JWT
+import { createError, unauthorized } from './errorHandler'; // Utilidades para manejo de errores
+
+/**
+ * Extensión de la interfaz Request de Express para incluir la propiedad user
+ */
 declare global {
   namespace Express {
     interface Request {
       user?: {
-        userId: string;
-        role: string;
-        iat: number;
-        exp: number;
+        userId: string;  // ID del usuario autenticado
+        role: string;   // Rol del usuario (ej: 'ADMIN', 'USER')
+        iat: number;    // Timestamp de emisión del token (issued at)
+        exp: number;    // Timestamp de expiración del token (expiration)
       };
     }
   }
 }
 
-// Clave secreta para firmar y verificar tokens JWT
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+/**
+ * Configuración de JWT
+ * La clave secreta se obtiene de las variables de entorno con un valor por defecto para desarrollo
+ * En producción, JWT_SECRET debe estar configurado en las variables de entorno
+ */
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'; // Usar una clave segura en producción
 
 /**
- * Middleware para verificar el token JWT en las peticiones
- * Extrae el token del header Authorization o de las cookies
+ * Middleware para verificar la autenticación mediante JWT
+ * Extrae el token del header 'Authorization' (formato: 'Bearer <token>')
+ * o de las cookies (clave 'token')
+ * 
+ * @param req - Objeto de solicitud de Express
+ * @param _res - Objeto de respuesta de Express (no utilizado)
+ * @param next - Función para pasar al siguiente middleware
+ * @returns Llama a next() si la autenticación es exitosa, o devuelve un error 401 si falla
  */
 export const authenticate = (req: Request, _res: Response, next: NextFunction) => {
   try {
@@ -69,7 +91,12 @@ export const authenticate = (req: Request, _res: Response, next: NextFunction) =
 };
 
 /**
- * Middleware para verificar que el usuario autenticado sea admin
+ * Middleware para verificar que el usuario autenticado tenga rol de administrador
+ * 
+ * @param req - Objeto de solicitud de Express (debe contener req.user)
+ * @param _res - Objeto de respuesta de Express (no utilizado)
+ * @param next - Función para pasar al siguiente middleware
+ * @returns Llama a next() si el usuario es administrador, o devuelve un error 403 si no tiene permisos
  */
 export const isAdmin = (req: Request, _res: Response, next: NextFunction) => {
   if (req.user?.role !== 'ADMIN') {
@@ -79,8 +106,14 @@ export const isAdmin = (req: Request, _res: Response, next: NextFunction) => {
 };
 
 /**
- * Middleware para verificar roles específicos
- * @param roles - Array de roles permitidos
+ * Factory de middleware para verificar roles específicos
+ * 
+ * @param roles - Array de roles que tienen permiso para acceder
+ * @returns Middleware de Express que verifica si el usuario tiene uno de los roles permitidos
+ * 
+ * @example
+ * // Uso en una ruta
+ * router.get('/admin', checkRole(['ADMIN', 'SUPER_ADMIN']), adminController.index);
  */
 export const checkRole = (roles: string[]) => {
   return (req: Request, _res: Response, next: NextFunction) => {
@@ -92,8 +125,14 @@ export const checkRole = (roles: string[]) => {
 };
 
 /**
- * Middleware para verificar propiedad o rol de administrador
- * @param userIdField - Nombre del campo que contiene el ID del usuario en los parámetros de la ruta
+ * Factory de middleware para verificar propiedad del recurso o rol de administrador
+ * 
+ * @param userIdField - Nombre del parámetro de ruta que contiene el ID del usuario propietario
+ * @returns Middleware de Express que verifica si el usuario es el propietario o es administrador
+ * 
+ * @example
+ * // Uso en una ruta
+ * router.put('/users/:id', isOwnerOrAdmin('id'), userController.update);
  */
 export const isOwnerOrAdmin = (userIdField = 'id') => {
   return (req: Request, _res: Response, next: NextFunction) => {

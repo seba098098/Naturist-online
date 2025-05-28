@@ -3,47 +3,110 @@
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { z } from 'zod';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { Alert, AlertDescription } from '../ui/alert';
 
+// Esquema de validación para el formulario de inicio de sesión
+const loginSchema = z.object({
+  email: z.string().email('Correo electrónico inválido'),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
+});
+
+type LoginFormData = z.infer<typeof loginSchema>;
+
+/**
+ * Componente de formulario de inicio de sesión
+ * Maneja la autenticación local con credenciales
+ */
 export function LoginForm() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<LoginFormData>({
     email: '',
     password: '',
   });
+  const [formErrors, setFormErrors] = useState<Partial<Record<keyof LoginFormData, string>>>({});
 
+  /**
+   * Maneja los cambios en los campos del formulario
+   */
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
       [name]: value,
     }));
+    
+    // Limpiar el error del campo cuando el usuario escribe
+    if (formErrors[name as keyof LoginFormData]) {
+      setFormErrors(prev => ({
+        ...prev,
+        [name]: '',
+      }));
+    }
   };
 
+  /**
+   * Valida el formulario usando el esquema de validación
+   */
+  const validateForm = (): boolean => {
+    try {
+      loginSchema.parse(formData);
+      setFormErrors({});
+      return true;
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const errors = error.errors.reduce<Record<string, string>>((acc, curr) => {
+          const key = curr.path[0] as string;
+          acc[key] = curr.message;
+          return acc;
+        }, {});
+        setFormErrors(errors);
+      }
+      return false;
+    }
+  };
+
+  /**
+   * Maneja el envío del formulario
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
     setError('');
+    
+    // Validar el formulario
+    if (!validateForm()) {
+      return;
+    }
+    
+    setIsLoading(true);
 
     try {
       const result = await signIn('credentials', {
         redirect: false,
-        email: formData.email,
+        email: formData.email.trim(),
         password: formData.password,
       });
 
       if (result?.error) {
-        setError('Credenciales inválidas');
+        // Manejar errores específicos del servidor si es necesario
+        const errorMessage = result.error === 'CredentialsSignin' 
+          ? 'Correo electrónico o contraseña incorrectos' 
+          : 'Error al iniciar sesión. Por favor, inténtalo de nuevo.';
+        
+        setError(errorMessage);
       } else {
+        // Redirigir al dashboard después de un inicio de sesión exitoso
         router.push('/dashboard');
+        router.refresh(); // Asegurar que la navegación se complete
       }
     } catch (error) {
-      console.error('Error during sign in:', error);
-      setError('Ocurrió un error al iniciar sesión');
+      console.error('Error durante el inicio de sesión:', error);
+      setError('Ocurrió un error inesperado. Por favor, inténtalo de nuevo más tarde.');
     } finally {
       setIsLoading(false);
     }
@@ -56,10 +119,13 @@ export function LoginForm() {
         <p className="text-gray-500">Ingresa tus credenciales para continuar</p>
       </div>
       
+      {/* Mensaje de error general */}
       {error && (
-        <div className="p-4 text-sm text-red-700 bg-red-100 rounded-lg">
-          {error}
-        </div>
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>
+            {error}
+          </AlertDescription>
+        </Alert>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -72,14 +138,26 @@ export function LoginForm() {
             placeholder="tu@email.com"
             value={formData.email}
             onChange={handleChange}
-            required
+            disabled={isLoading}
+            aria-invalid={!!formErrors.email}
+            aria-describedby={formErrors.email ? 'email-error' : undefined}
+            className={formErrors.email ? 'border-red-500' : ''}
           />
+          {formErrors.email && (
+            <p id="email-error" className="text-sm text-red-500 mt-1">
+              {formErrors.email}
+            </p>
+          )}
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label htmlFor="password">Contraseña</Label>
-            <a href="/auth/forgot-password" className="text-sm text-blue-600 hover:underline">
+            <a 
+              href="/auth/forgot-password" 
+              className="text-sm text-blue-600 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 rounded"
+              tabIndex={isLoading ? -1 : 0}
+            >
               ¿Olvidaste tu contraseña?
             </a>
           </div>
@@ -90,12 +168,35 @@ export function LoginForm() {
             placeholder="••••••••"
             value={formData.password}
             onChange={handleChange}
-            required
+            disabled={isLoading}
+            aria-invalid={!!formErrors.password}
+            aria-describedby={formErrors.password ? 'password-error' : undefined}
+            className={formErrors.password ? 'border-red-500' : ''}
           />
+          {formErrors.password && (
+            <p id="password-error" className="text-sm text-red-500 mt-1">
+              {formErrors.password}
+            </p>
+          )}
         </div>
 
-        <Button type="submit" className="w-full" disabled={isLoading}>
-          {isLoading ? 'Iniciando sesión...' : 'Iniciar sesión'}
+        <Button 
+          type="submit" 
+          className="w-full mt-6" 
+          disabled={isLoading}
+          aria-busy={isLoading}
+        >
+          {isLoading ? (
+            <>
+              <span className="mr-2">
+                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </span>
+              Iniciando sesión...
+            </>
+          ) : 'Iniciar sesión'}
         </Button>
       </form>
 

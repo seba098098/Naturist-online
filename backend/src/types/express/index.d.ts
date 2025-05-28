@@ -1,25 +1,37 @@
-import express, { Application } from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import authRoutes from './routes/auth';
-import { errorHandler } from './middleware/errorHandler';
+/**
+ * Módulo de definición de tipos para Express
+ * Extiende las interfaces de Express para añadir tipos personalizados a los objetos Request
+ */
 
-dotenv.config();
+import 'express';
 
-const app: Application = express();
-const PORT = process.env.PORT || 4000;
-
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
-app.use(express.json());
-
-app.use('/auth', authRoutes);
-
-app.get('/', (_req, res) => {
-  res.send('API de Lujos backend funcionando');
-});
-
-app.use(errorHandler);
-
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en http://localhost:${PORT}`);
-});
+/**
+ * Extensión de la interfaz Request de Express para incluir propiedades personalizadas
+ * que se añaden a través de los middlewares de la aplicación.
+ */
+declare global {
+  namespace Express {
+    /**
+     * Interfaz extendida del objeto Request de Express
+     */
+    export interface Request {
+      /**
+       * Información del usuario autenticado.
+       * Definida por el middleware de autenticación cuando se verifica un token JWT válido.
+       */
+      user?: {
+        /** ID único del usuario en la base de datos */
+        userId: string;
+        
+        /** Rol del usuario (ej: 'ADMIN', 'USER') */
+        role: string;
+        
+        /** Timestamp de emisión del token (issued at) */
+        iat: number;
+        
+        /** Timestamp de expiración del token (expiration) */
+        exp: number;
+      };
+    }
+  }
+}
