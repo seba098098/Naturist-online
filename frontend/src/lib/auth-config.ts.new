@@ -1,0 +1,6 @@
+// Este archivo ha sido reemplazado por src/config/auth.ts
+// Por favor, actualiza tus importaciones para usar el nuevo archivo
+
+export * from '@/config/auth';
+
+export { default } from '@/config/auth';
