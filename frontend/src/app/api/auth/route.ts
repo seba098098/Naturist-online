@@ -14,35 +14,8 @@ import bcrypt from 'bcryptjs';
 import config from '@/config';
 import { User, DefaultSession, DefaultUser } from 'next-auth';
 
-// Extender las interfaces de NextAuth para incluir la propiedad role
-declare module 'next-auth' {
-  /**
-   * Extiende la interfaz de usuario por defecto
-   */
-  interface User extends DefaultUser {
-    role?: 'USER' | 'ADMIN';
-  }
-
-  /**
-   * Extiende la interfaz de sesión por defecto
-   */
-  interface Session {
-    user: {
-      id: string;
-      role?: 'USER' | 'ADMIN';
-    } & DefaultSession['user'];
-  }
-}
-
-declare module 'next-auth/jwt' {
-  /**
-   * Extiende la interfaz JWT para incluir propiedades personalizadas
-   */
-  interface JWT {
-    id: string;
-    role?: 'USER' | 'ADMIN';
-  }
-}
+// Las declaraciones de tipos se han movido a src/types/next.d.ts para evitar conflictos
+// y mantener la consistencia en toda la aplicación
 
 /**
  * Interfaz para el usuario autenticado
@@ -148,8 +121,9 @@ export const authOptions = {
             id: user.id,
             name: user.name,
             email: user.email,
-            // Asegurar que el rol sea uno de los permitidos
-            role: (user.role === 'ADMIN' ? 'ADMIN' : 'USER') as 'USER' | 'ADMIN',
+            // Establecer un rol por defecto 'USER' ya que el campo role no está en el tipo por defecto
+            // Los roles se pueden manejar a través de la base de datos o lógica adicional
+            role: 'USER',
             image: null
           };
           

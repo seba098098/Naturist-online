@@ -1,9 +1,10 @@
 // Importaciones de NextAuth y tipos necesarios
-import NextAuth from 'next-auth';
+import NextAuth, { type DefaultSession, type User, type Account, type Profile } from 'next-auth';
+import type { AdapterUser } from 'next-auth/adapters';
 import Credentials from 'next-auth/providers/credentials';
 import Google from 'next-auth/providers/google';
-import type { NextAuthConfig, DefaultSession } from 'next-auth';
-import type { JWT as DefaultJWT } from 'next-auth/jwt';
+import type { NextAuthConfig } from 'next-auth';
+import type { JWT as DefaultJWT, JWT } from 'next-auth/jwt';
 
 /**
  * Interfaz para el usuario personalizado
@@ -14,7 +15,7 @@ interface CustomUser {
   name?: string | null;
   email?: string | null;
   image?: string | null;
-  role?: string;
+  role?: 'USER' | 'ADMIN';
   accessToken?: string;
 }
 
@@ -23,21 +24,26 @@ interface CustomUser {
  * Incluye el token de acceso y el usuario personalizado
  */
 interface CustomSession extends DefaultSession {
-  user: CustomUser;
+  user: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+    role?: 'USER' | 'ADMIN';
+    accessToken?: string;
+  };
   accessToken?: string;
 }
 
 /**
  * Interfaz para el token JWT personalizado
- * Almacena información del usuario y tokens
- */
-/**
- * Interfaz para el token JWT personalizado
  * Extiende el tipo JWT por defecto con campos adicionales
  */
-interface CustomJWT extends DefaultJWT {
+type Role = 'USER' | 'ADMIN';
+
+interface CustomJWT {
   /** ID único del usuario */
-  id: string;
+  id?: string;
   
   /** Nombre para mostrar del usuario */
   name?: string | null;
@@ -48,15 +54,18 @@ interface CustomJWT extends DefaultJWT {
   /** URL de la imagen de perfil del usuario */
   image?: string | null;
   
-  /** Rol del usuario (valor por defecto: 'user') */
-  role: string;
+  /** Rol del usuario */
+  role?: 'USER' | 'ADMIN';
   
-  /** Token de acceso para autenticación con la API */
+  /** Token de acceso */
   accessToken?: string;
+  
+  [key: string]: any;
 }
 
 // Configuración de la URL de la API
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const NEXTAUTH_URL = process.env.NEXT_PUBLIC_NEXTAUTH_URL || 'http://localhost:3000';
 
 /**
  * Extensión de tipos de NextAuth para TypeScript
@@ -67,17 +76,36 @@ declare module 'next-auth' {
   interface Session extends CustomSession {}
 }
 
+// Extensión de tipos para JWT
 declare module 'next-auth/jwt' {
-  interface JWT extends CustomJWT {}
+  interface JWT {
+    id?: string;
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+    role?: 'USER' | 'ADMIN';
+    accessToken?: string;
+    [key: string]: any;
+  }
 }
 
+type Session = CustomSession;
+
 // Verificar variables de entorno
-const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET;
+const NEXTAUTH_SECRET = process.env.NEXT_PUBLIC_NEXTAUTH_SECRET;
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_CLIENT_SECRET = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET;
 
 if (!NEXTAUTH_SECRET) {
-  throw new Error('NEXTAUTH_SECRET is not defined in environment variables');
+  throw new Error('NEXT_PUBLIC_NEXTAUTH_SECRET is not defined in environment variables');
+}
+
+if (!GOOGLE_CLIENT_ID) {
+  throw new Error('NEXT_PUBLIC_GOOGLE_CLIENT_ID is not defined in environment variables');
+}
+
+if (!GOOGLE_CLIENT_SECRET) {
+  throw new Error('NEXT_PUBLIC_GOOGLE_CLIENT_SECRET is not defined in environment variables');
 }
 
 // Configuración de NextAuth
@@ -175,55 +203,43 @@ export const authConfig: NextAuthConfig = {
             scope: 'openid email profile',
           },
         },
+        token: {
+          params: {
+            grant_type: 'authorization_code'
+          }
+        },
+        checks: ['pkce', 'state'],
         async profile(profile) {
           try {
-            // Enviar el token de Google al backend
-            const response = await fetch(`${API_URL}/api/google-login`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                token: profile.sub, // o el token de acceso de Google
-              }),
-            });
-
-            if (!response.ok) {
-              const error = await response.json();
-              throw new Error(error.message || 'Google authentication failed');
+            // Verificar que el perfil tenga los campos requeridos
+            if (!profile.sub || !profile.email) {
+              console.error('Perfil de Google incompleto:', profile);
+              throw new Error('No se pudo obtener la información necesaria de tu cuenta de Google');
             }
-
-            const user = await response.json();
             
-            return {
-              id: user.id,
-              name: user.name || profile.name,
-              email: user.email || profile.email,
-              image: user.image || profile.picture,
-              role: user.role || 'user',
+            // Crear objeto de usuario con la información del perfil
+            const userProfile = {
+              id: profile.sub,
+              name: profile.name || profile.email.split('@')[0] || 'Usuario',
+              email: profile.email,
+              image: profile.picture || null,
+              role: 'USER' as const,
             };
+            
+            // Registrar el perfil del usuario (solo en desarrollo)
+            if (process.env.NODE_ENV === 'development') {
+              console.log('Perfil de Google procesado:', userProfile);
+            }
+            
+            return userProfile;
           } catch (error) {
-            console.error('Error during Google authentication:', error);
-            throw new Error('Google authentication failed');
+            console.error('Error al procesar el perfil de Google:', error);
+            throw new Error('No se pudo iniciar sesión con Google. Por favor, inténtalo de nuevo.');
           }
         },
       })
     ] : []),
   ],
-  
-  // Configuración de páginas personalizadas
-  pages: {
-    signIn: '/auth/login',
-    signOut: '/auth/logout',
-    error: '/auth/error',
-  },
-  
-  // Configuración de sesión
-  session: {
-    strategy: 'jwt' as const,
-    maxAge: 30 * 24 * 60 * 60, // 30 días
-    updateAge: 24 * 60 * 60, // 24 horas
-  },
   
   // Callbacks para personalizar el comportamiento de autenticación
   callbacks: {
@@ -236,7 +252,7 @@ export const authConfig: NextAuthConfig = {
      * @param params.account - Información de la cuenta del proveedor (OAuth)
      * @returns Token JWT actualizado
      */
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, trigger, session, profile }) {
       // Si hay un usuario (durante el inicio de sesión)
       if (user) {
         const customUser = user as CustomUser;
@@ -246,25 +262,45 @@ export const authConfig: NextAuthConfig = {
           name: user.name || null,
           email: user.email || null,
           image: user.image || null,
-          role: customUser.role || 'user', // Valor por defecto 'user'
-          accessToken: customUser.accessToken || account?.access_token || token.accessToken,
+          role: customUser.role || 'USER',
+          accessToken: customUser.accessToken || account?.access_token || (token as any).accessToken,
         };
       }
       
       // Si hay un token de acceso de la cuenta (ej: Google OAuth)
       if (account?.access_token) {
+        // Si es una actualización de sesión desde el cliente
+        if (trigger === 'update' && session) {
+          return { ...token, ...session.user };
+        }
+        
+        // Para autenticación con Google
+        if (account.provider === 'google') {
+          return {
+            ...token,
+            id: token.sub || '',
+            name: token.name || profile?.name || null,
+            email: token.email || profile?.email || null,
+            image: token.picture || profile?.picture || null,
+            role: token.role || 'USER',
+            accessToken: account.access_token,
+          };
+        }
+        
+        // Para otros proveedores OAuth
         return {
           ...token,
+          id: token.sub || '',
           accessToken: account.access_token,
-          // Asegurarse de que siempre haya un rol
-          role: (token as CustomJWT).role || 'user',
+          role: token.role || 'USER',
         };
       }
       
       // Mantener el token existente, asegurando que tenga un rol
       return {
         ...token,
-        role: (token as CustomJWT).role || 'user',
+        id: token.sub || '',
+        role: token.role || 'USER',
       };
     },
     
@@ -280,27 +316,35 @@ export const authConfig: NextAuthConfig = {
       // Asegurarse de que token tenga el tipo correcto
       const customToken = token as CustomJWT;
       
-      // Crear una copia segura de la sesión con los datos actualizados
-      const customSession = {
-        ...session,
-        user: {
+      // Actualizar la sesión con los datos del token
+      if (session.user) {
+        session.user = {
           ...session.user,
-          id: customToken.id,
-          name: customToken.name,
-          email: customToken.email || '',
+          id: customToken.id || '',
+          name: customToken.name || null,
+          email: customToken.email || '', // Asegurar que email sea string, no null
           image: customToken.image || null,
-          role: customToken.role || 'user', // Valor por defecto 'user'
-        },
-        accessToken: customToken.accessToken,
-      };
+          role: (customToken.role as 'USER' | 'ADMIN') || 'USER',
+        };
+      }
       
-      return customSession;
+      // Añadir el token de acceso a la sesión
+      if (customToken.accessToken) {
+        (session as any).accessToken = customToken.accessToken;
+      }
+      
+      return session as CustomSession;
     },
   },
   
   // Habilitar mensajes de depuración en desarrollo
   debug: process.env.NODE_ENV === 'development',
-  secret: NEXTAUTH_SECRET,
+  secret: process.env.NEXT_PUBLIC_NEXTAUTH_SECRET,
+  trustHost: true,
+  // Configuración de la URL base para NextAuth
+  theme: {
+    colorScheme: 'light',
+  },
 };
 
 // Exportar el manejador de autenticación

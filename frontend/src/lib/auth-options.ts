@@ -4,30 +4,8 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import { compare } from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
 
-// Extender tipos de NextAuth
-declare module 'next-auth' {
-  interface Session extends DefaultSession {
-    user: {
-      id: string;
-      role?: string;
-    } & DefaultSession['user'];
-  }
-
-  interface User {
-    id: string;
-    name?: string | null;
-    email?: string | null;
-    image?: string | null;
-    role?: string;
-  }
-}
-
-declare module 'next-auth/jwt' {
-  interface JWT {
-    id: string;
-    role?: string;
-  }
-}
+// Las declaraciones de tipos se han movido a src/types/next.d.ts para evitar conflictos
+// y mantener la consistencia en toda la aplicación
 
 // Cliente de Prisma
 const prisma = new PrismaClient();
@@ -96,7 +74,7 @@ export const authOptions = {
             id: user.id,
             email: user.email,
             name: user.name,
-            role: 'user', // Asignar un rol por defecto
+            role: 'USER' as const, // Asignar un rol por defecto
           };
         } catch (error) {
           console.error('Error en autenticación:', error);

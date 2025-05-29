@@ -4,8 +4,12 @@ declare module 'next-auth' {
   interface Session {
     user: {
       id: string;
-      role?: string;
-    } & DefaultSession['user'];
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+      role?: 'USER' | 'ADMIN';
+      accessToken?: string;
+    };
     accessToken?: string;
   }
 
@@ -13,14 +17,20 @@ declare module 'next-auth' {
     id: string;
     name?: string | null;
     email?: string | null;
-    role?: string;
+    image?: string | null;
+    role?: 'USER' | 'ADMIN';
+    accessToken?: string;
   }
 }
 
 declare module 'next-auth/jwt' {
   interface JWT {
-    id: string;
-    role?: string;
+    id?: string;
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+    role?: 'USER' | 'ADMIN';
     accessToken?: string;
+    [key: string]: any;
   }
 }
