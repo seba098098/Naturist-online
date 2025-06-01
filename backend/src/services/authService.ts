@@ -173,7 +173,6 @@ export const getUserProfile = async (userId: number) => {
       name: true,
       email: true,
       role: true,
-      avatar_url: true,
       auth_provider: true,
       created_at: true,
       updated_at: true

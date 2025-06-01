@@ -146,7 +146,7 @@ export const logout = (_req: Request, res: Response) => {
  */
 export const getProfile = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const userId = (req as any).user?.userId;
+    const userId = Number((req as any).user?.userId);
     if (!userId) {
       return next(unauthorized('No autorizado'));
     }
