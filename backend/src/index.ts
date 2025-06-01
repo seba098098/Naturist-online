@@ -8,6 +8,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
 import authRoutes from './routes/auth';
+import userRoutes from './routes/users';
 import { errorHandler, ERROR_TYPES } from './middleware/errorHandler';
 import { publicRoutes } from './routes/auth';
 
@@ -111,6 +112,12 @@ app.use('/api', (req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 }, authRoutes);
+
+// Rutas de usuarios (protegidas por autenticación y rol de administrador)
+app.use('/api/users', (req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+}, userRoutes);
 
 // Middleware para manejar rutas no encontradas (404)
 app.use((_req: Request, res: Response) => {
