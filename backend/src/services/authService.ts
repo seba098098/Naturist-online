@@ -1,58 +1,86 @@
 /**
  * Servicio de autenticación
- * Maneja la lógica de negocio relacionada con la autenticación de usuarios:
- * - Registro de nuevos usuarios
- * - Inicio de sesión con credenciales locales
- * - Autenticación con proveedores OAuth (Google)
- * - Gestión de tokens JWT
- * - Restablecimiento de contraseñas
+ * Maneja la lógica de negocio relacionada con la autenticación de usuarios
  */
 
 // Importación de dependencias
-import bcrypt from 'bcrypt'; // Para hashear y comparar contraseñas
-import jwt from 'jsonwebtoken'; // Para generar y verificar tokens JWT
-import { PrismaClient, AuthProvider, Role } from '@prisma/client'; // Tipos de Prisma
-import { createError } from '../middleware/errorHandler'; // Utilidad para crear errores personalizados
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import { PrismaClient, AuthProvider, Role } from '@prisma/client';
+import { createError } from '../middleware/errorHandler';
+import logger from '../utils/logger';
+import { 
+  User, 
+  CreateUserData, 
+  AuthResponse 
+} from '../types/user.types';
+import { 
+  JWT_CONFIG, 
+  BCRYPT_CONFIG, 
+  AUTH_ERRORS 
+} from '../constants/auth.constants';
 
-// Inicialización del cliente de Prisma para interactuar con la base de datos
+// Validar variables de entorno
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET no está definido en las variables de entorno');
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// Inicialización del cliente de Prisma
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error']
 });
 
-/**
- * Interfaz que representa un usuario en el sistema
- * Incluye todos los campos relevantes de la entidad User de Prisma
- */
-type User = {
-  id: number;                     // Identificador único del usuario
-  name: string;                   // Nombre completo del usuario
-  email: string;                  // Correo electrónico (único)
-  password_hash: string;          // Hash de la contraseña (solo para autenticación local)
-  role: Role;                     // Rol del usuario (ADMIN, USER, etc.)
-  auth_provider: AuthProvider;    // Proveedor de autenticación (LOCAL, GOOGLE, etc.)
-  created_at: Date;               // Fecha de creación del usuario
-  updated_at: Date;               // Fecha de última actualización
-  avatar_url: string | null;      // URL de la imagen de perfil
-  email_verified: boolean;        // Indica si el correo electrónico ha sido verificado
+// Extender el tipo de usuario para incluir los campos adicionales
+type UserWithProfile = User & {
+  avatar_url?: string | null;
+  email_verified: boolean;
+  [key: string]: any; // Para permitir propiedades adicionales
 };
 
 /**
- * Configuración de la autenticación
- * Las variables de entorno tienen valores por defecto para desarrollo,
- * pero deben configurarse en producción.
+ * Genera un token JWT para un usuario autenticado
+ * @param userId - ID del usuario (se convierte a string si es necesario)
+ * @param role - Rol del usuario para incluir en el payload del token
+ * @returns Token JWT firmado
+ * @throws {Error} Si hay un error al generar el token
  */
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'; // Clave secreta para firmar los tokens JWT
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';     // Tiempo de expiración de los tokens
-const SALT_ROUNDS = 10; // Número de rondas de hashing para bcrypt (mayor = más seguro pero más lento)
-
-/**
- * Interfaz para la respuesta de autenticación
- * Contiene el token JWT y los datos del usuario (sin la contraseña)
- */
-export interface AuthResponse {
-  token: string;                     // Token JWT para autenticación
-  user: Omit<User, 'password_hash'>;  // Datos del usuario sin la contraseña
-}
+const generateToken = (userId: string | number, role: string): string => {
+  const userIdStr = userId.toString();
+  logger.info(`Generando token para userId: ${userIdStr}, rol: ${role}`);
+  
+  // Asegurarse de que JWT_SECRET esté definido
+  if (!JWT_SECRET) {
+    const error = new Error('JWT_SECRET no está configurado');
+    logger.error('Error en generateToken:', error);
+    throw error;
+  }
+  
+  try {
+    const payload = { 
+      userId: userIdStr, 
+      role,
+      iat: Math.floor(Date.now() / 1000) 
+    };
+    
+    // Convertir '7d' a segundos (7 días = 604800 segundos)
+    const expiresInSeconds = 7 * 24 * 60 * 60; // 7 días en segundos
+    
+    const options: jwt.SignOptions = { 
+      expiresIn: expiresInSeconds, // Usar segundos en lugar de string
+      algorithm: 'HS256'
+    };
+    
+    const token = jwt.sign(payload, JWT_SECRET, options);
+    
+    logger.debug('Token generado exitosamente');
+    return token;
+  } catch (error) {
+    logger.error('Error al generar el token', { error });
+    throw createError('Error al generar el token de autenticación', 500, 'AUTH_ERROR');
+  }
+};
 
 /**
  * Registra un nuevo usuario en el sistema con autenticación local
@@ -67,56 +95,78 @@ export const registerUser = async (
   email: string, 
   password: string
 ): Promise<AuthResponse> => {
-  console.log(`[AUTH_SERVICE] Iniciando registro para: ${email}`);
+  logger.info(`Iniciando registro para: ${email}`);
   
-  // Verificar si el usuario existe
-  console.log(`[AUTH_SERVICE] Verificando si el usuario ya existe: ${email}`);
-  const existingUser = await prisma.users.findUnique({ where: { email } });
-  if (existingUser) {
-    console.log(`[AUTH_SERVICE] Error: El correo ${email} ya está registrado`);
-    throw createError('El correo electrónico ya está registrado', 400, 'AUTH_ERROR');
+  try {
+    // Verificar si el usuario ya existe
+    const existingUser = await prisma.users.findUnique({ 
+      where: { email },
+      select: { id: true }
+    });
+    
+    if (existingUser) {
+      logger.warn(`Intento de registro con correo ya existente: ${email}`);
+      throw createError(AUTH_ERRORS.EMAIL_ALREADY_EXISTS, 400, 'AUTH_ERROR');
+    }
+    
+    // Hashear la contraseña
+    const passwordHash = await bcrypt.hash(password, BCRYPT_CONFIG.SALT_ROUNDS);
+    
+    // Crear el usuario en una transacción
+    const user = await prisma.$transaction(async (tx) => {
+      // Usar una aserción de tipo para los datos del usuario
+      const userData = {
+        name,
+        email,
+        password_hash: passwordHash,
+        role: 'USER' as const,
+        auth_provider: 'LOCAL' as const,
+        email_verified: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+      
+      // Crear el usuario con los datos tipados
+      const newUser = await tx.users.create({
+        data: userData as any, // Usamos 'as any' temporalmente para evitar problemas de tipos
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          auth_provider: true,
+          created_at: true,
+          updated_at: true
+          // Nota: No incluimos avatar_url y email_verified aquí ya que no son reconocidos por el tipo
+        }
+      });
+      
+      // Añadir los campos personalizados manualmente
+      return {
+        ...newUser,
+        avatar_url: null,
+        email_verified: false
+      } as any; // Usamos 'as any' temporalmente
+    });
+    
+    // Generar token JWT
+    const token = generateToken(user.id, user.role);
+    
+    logger.info(`Usuario registrado exitosamente: ${user.id}`);
+    
+    return {
+      token,
+      user: {
+        ...user,
+        // Asegurarse de que los campos opcionales tengan valores por defecto
+        avatar_url: (user as any).avatar_url || null,
+        email_verified: (user as any).email_verified ?? false
+      }
+    };
+  } catch (error) {
+    logger.error('Error en registerUser', { error, email });
+    throw error;
   }
-
-  // Hashear la contraseña
-  console.log(`[AUTH_SERVICE] Hasheando contraseña para: ${email}`);
-  const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
-  
-  // Crear el usuario
-  console.log(`[AUTH_SERVICE] Creando usuario en la base de datos: ${email}`);
-  const user = await prisma.users.create({
-    data: { 
-      name, 
-      email, 
-      password_hash, 
-      auth_provider: AuthProvider.LOCAL,
-      role: 'USER' // Rol por defecto
-    },
-  });
-  
-  console.log(`[AUTH_SERVICE] Usuario creado con ID: ${user.id}`);
-
-  // Generar token JWT - Asegurarse de que el ID sea un string
-  console.log(`[AUTH_SERVICE] Generando token JWT para el usuario ID: ${user.id}`);
-  const token = generateToken(user.id.toString(), user.role);
-  
-  // Devolver token y datos del usuario (sin la contraseña)
-  const { password_hash: __, ...userWithoutPassword } = user;
-  
-  // Asegurarse de que todos los campos requeridos estén presentes
-  const userResponse = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    auth_provider: user.auth_provider,
-    created_at: user.created_at,
-    updated_at: user.updated_at,
-    avatar_url: ('avatar_url' in user ? (user as any).avatar_url : null) as string | null,
-    email_verified: ('email_verified' in user ? (user as any).email_verified : false) as boolean
-  };
-  
-  console.log(`[AUTH_SERVICE] Registro completado para: ${email}`);
-  return { token, user: userResponse };
 };
 
 /**
@@ -192,12 +242,13 @@ export const loginUser = async (
  */
 export const getUserProfile = async (userId: number) => {
   // Buscar usuario por ID
-  const user = await prisma.users.findUnique({
+  let user = await prisma.users.findUnique({
     where: { id: userId },
     select: {
       id: true,
       name: true,
       email: true,
+      password_hash: true,
       role: true,
       auth_provider: true,
       created_at: true,
@@ -205,7 +256,7 @@ export const getUserProfile = async (userId: number) => {
       avatar_url: true,
       email_verified: true
     }
-  });
+  }) as any; // Usar aserción de tipo temporalmente
   
   if (!user) {
     throw createError('Usuario no encontrado', 404, 'NOT_FOUND');
@@ -214,9 +265,10 @@ export const getUserProfile = async (userId: number) => {
   // Asegurarse de que los campos opcionales tengan valores por defecto
   return {
     ...user,
-    avatar_url: user.avatar_url || null,
-    email_verified: user.email_verified ?? false
-  };
+    // Usar aserción de tipo para acceder a los campos personalizados
+    avatar_url: (user as any).avatar_url || null,
+    email_verified: (user as any).email_verified ?? false
+  } as UserWithProfile;
 };
 
 /**
@@ -236,7 +288,7 @@ export const resetUserPassword = async (email: string, newPassword: string): Pro
   }
 
   // Hashear la nueva contraseña
-  const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  const newHash = await bcrypt.hash(newPassword, BCRYPT_CONFIG.SALT_ROUNDS);
   
   // Actualizar la contraseña
   await prisma.users.update({ 
@@ -269,8 +321,20 @@ export const findOrCreateGoogleUser = async (
 
     // Buscar usuario existente
     let user = await prisma.users.findUnique({ 
-      where: { email }
-    });
+      where: { email },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        password_hash: true,
+        role: true,
+        auth_provider: true,
+        created_at: true,
+        updated_at: true,
+        avatar_url: true,
+        email_verified: true
+      }
+    }) as any; // Usar aserción de tipo temporalmente
     
     console.log(`[AUTH_SERVICE] Usuario ${user ? 'encontrado' : 'no encontrado'}: ${email}`);
     
@@ -350,7 +414,7 @@ export const findOrCreateGoogleUser = async (
     const { password_hash, ...userWithoutPassword } = user;
     
     // Asegurarse de que todos los campos requeridos estén presentes
-    const userResponse = {
+    const userResponse: UserWithProfile = {
       id: user.id,
       name: user.name,
       email: user.email,
@@ -358,8 +422,9 @@ export const findOrCreateGoogleUser = async (
       auth_provider: user.auth_provider,
       created_at: user.created_at,
       updated_at: user.updated_at,
-      avatar_url: ('avatar_url' in user ? (user as any).avatar_url : null) as string | null,
-      email_verified: ('email_verified' in user ? (user as any).email_verified : false) as boolean
+      // Usar aserción de tipo para acceder a los campos personalizados
+      avatar_url: (user as any).avatar_url || null,
+      email_verified: (user as any).email_verified ?? false
     };
     
     return { 
@@ -369,42 +434,5 @@ export const findOrCreateGoogleUser = async (
   } catch (error) {
     console.error('[AUTH_SERVICE] Error en findOrCreateGoogleUser:', error);
     throw error; // Re-lanzar el error para que lo maneje el controlador
-  }
-};
-
-/**
- * Genera un token JWT para un usuario autenticado
- * @param userId - ID del usuario (se convierte a string si es necesario)
- * @param role - Rol del usuario para incluir en el payload del token
- * @returns Token JWT firmado
- * @throws {Error} Si hay un error al generar el token
- */
-function generateToken(userId: string | number, role: string): string {
-  // Asegurarse de que el userId sea un string
-  const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
-  console.log(`[AUTH_SERVICE] Generando token para userId: ${userId}, rol: ${role}`);
-  
-  // Crear payload del token
-  const payload = { 
-    userId: userIdStr, 
-    role,
-    iat: Math.floor(Date.now() / 1000) // Fecha de emisión
-  };
-  
-  // Configurar opciones del token con un valor numérico para evitar problemas de tipado
-  const options = { 
-    expiresIn: 60 * 60 * 24 * 7, // 7 días en segundos
-    algorithm: 'HS256' as const
-  };
-  
-  console.log(`[AUTH_SERVICE] Payload del token:`, JSON.stringify(payload));
-  
-  try {
-    const token = jwt.sign(payload as object, JWT_SECRET, options);
-    console.log(`[AUTH_SERVICE] Token generado exitosamente`);
-    return token;
-  } catch (error) {
-    console.error(`[AUTH_SERVICE] Error al generar el token:`, error);
-    throw error;
   }
 };
