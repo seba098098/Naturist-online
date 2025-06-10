@@ -203,40 +203,15 @@ export const authConfig: NextAuthConfig = {
             scope: 'openid email profile',
           },
         },
-        token: {
-          params: {
-            grant_type: 'authorization_code'
-          }
-        },
-        checks: ['pkce', 'state'],
-        async profile(profile) {
-          try {
-            // Verificar que el perfil tenga los campos requeridos
-            if (!profile.sub || !profile.email) {
-              console.error('Perfil de Google incompleto:', profile);
-              throw new Error('No se pudo obtener la información necesaria de tu cuenta de Google');
-            }
-            
-            // Crear objeto de usuario con la información del perfil
-            const userProfile = {
-              id: profile.sub,
-              name: profile.name || profile.email.split('@')[0] || 'Usuario',
-              email: profile.email,
-              image: profile.picture || null,
-              role: 'USER' as const,
-            };
-            
-            // Registrar el perfil del usuario (solo en desarrollo)
-            if (process.env.NODE_ENV === 'development') {
-              console.log('Perfil de Google procesado:', userProfile);
-            }
-            
-            return userProfile;
-          } catch (error) {
-            console.error('Error al procesar el perfil de Google:', error);
-            throw new Error('No se pudo iniciar sesión con Google. Por favor, inténtalo de nuevo.');
-          }
-        },
+        profile(profile) {
+          return {
+            id: profile.sub,
+            name: profile.name || profile.email?.split('@')[0] || 'Usuario',
+            email: profile.email,
+            image: profile.picture,
+            role: 'USER' // Rol por defecto
+          };
+        }
       })
     ] : []),
   ],
@@ -253,55 +228,69 @@ export const authConfig: NextAuthConfig = {
      * @returns Token JWT actualizado
      */
     async jwt({ token, user, account, trigger, session, profile }) {
-      // Si hay un usuario (durante el inicio de sesión)
+      // Enviar el token de Google al backend solo en el primer inicio de sesión
+      if (account?.provider === 'google' && account?.id_token) {
+        try {
+          const response = await fetch(`${API_URL}/api/google-login`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              token: account.id_token,
+            }),
+            credentials: 'include' // Importante para las cookies
+          });
+
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.message || 'Error al autenticar con Google');
+          }
+
+          const data = await response.json();
+          
+          // Actualizar el token con la respuesta del backend
+          token.accessToken = data.data.token;
+          token.role = data.data.user.role;
+          token.id = data.data.user.id;
+          token.name = data.data.user.name;
+          token.email = data.data.user.email;
+          token.image = data.data.user.avatar_url;
+          
+          // Si hay un usuario, actualizar sus datos
+          if (user) {
+            user.id = data.data.user.id;
+            user.role = data.data.user.role;
+            user.name = data.data.user.name;
+            user.email = data.data.user.email;
+            user.image = data.data.user.avatar_url;
+          }
+        } catch (error) {
+          console.error('Error en la autenticación con Google:', error);
+          throw error;
+        }
+      } else if (account?.provider === 'google' && account?.access_token) {
+        // Si ya tenemos un token de acceso de Google
+        token.accessToken = account.access_token;
+        token.id = token.sub || '';
+        token.role = token.role || 'USER';
+      }
+      
+      // Si es el primer inicio de sesión, añadir los datos del usuario al token
       if (user) {
-        const customUser = user as CustomUser;
-        return {
-          ...token,
-          id: user.id,
-          name: user.name || null,
-          email: user.email || null,
-          image: user.image || null,
-          role: customUser.role || 'USER',
-          accessToken: customUser.accessToken || account?.access_token || (token as any).accessToken,
-        };
+        token.id = user.id;
+        token.role = (user.role as Role) || 'USER';
+        if (user.accessToken) {
+          token.accessToken = user.accessToken;
+        }
       }
       
-      // Si hay un token de acceso de la cuenta (ej: Google OAuth)
-      if (account?.access_token) {
-        // Si es una actualización de sesión desde el cliente
-        if (trigger === 'update' && session) {
-          return { ...token, ...session.user };
-        }
-        
-        // Para autenticación con Google
-        if (account.provider === 'google') {
-          return {
-            ...token,
-            id: token.sub || '',
-            name: token.name || profile?.name || null,
-            email: token.email || profile?.email || null,
-            image: token.picture || profile?.picture || null,
-            role: token.role || 'USER',
-            accessToken: account.access_token,
-          };
-        }
-        
-        // Para otros proveedores OAuth
-        return {
-          ...token,
-          id: token.sub || '',
-          accessToken: account.access_token,
-          role: token.role || 'USER',
-        };
+      // Si es una actualización de sesión
+      if (trigger === 'update' && session) {
+        return { ...token, ...session.user };
       }
       
-      // Mantener el token existente, asegurando que tenga un rol
-      return {
-        ...token,
-        id: token.sub || '',
-        role: token.role || 'USER',
-      };
+      return token;
     },
     
     /**

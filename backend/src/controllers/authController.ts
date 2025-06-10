@@ -163,7 +163,10 @@ export const getProfile = async (req: Request, res: Response, next: NextFunction
         name: user.name,
         email: user.email,
         role: user.role,
-        created_at: user.created_at
+        avatar_url: user.avatar_url || null,
+        email_verified: user.email_verified || false,
+        created_at: user.created_at,
+        updated_at: user.updated_at
       }
     });
   } catch (error) {
@@ -207,30 +210,49 @@ export const loginWithGoogle = async (req: Request, res: Response, next: NextFun
       return next(createError('Token de Google es requerido', 400, 'VALIDATION_ERROR'));
     }
 
+    // Verificar el token con Google
     const ticket = await googleClient.verifyIdToken({ 
       idToken: token, 
-      audience: GOOGLE_CLIENT_ID 
+      audience: process.env.GOOGLE_CLIENT_ID // Usar el ID de cliente de las variables de entorno
     });
     
+    // Obtener los datos del usuario de Google
     const payload = ticket.getPayload();
     if (!payload?.email) {
-return next(createError('Token de Google inválido', 400, ERROR_TYPES.UNAUTHORIZED));
+      return next(createError('Token de Google inválido', 400, ERROR_TYPES.UNAUTHORIZED));
     }
 
+    console.log('Payload de Google:', {
+      email: payload.email,
+      name: payload.name,
+      picture: payload.picture,
+      email_verified: payload.email_verified
+    });
+
+    // Buscar o crear el usuario en la base de datos
     const { token: jwtToken, user } = await authService.findOrCreateGoogleUser(
       payload.email, 
       payload.name || 'Usuario de Google',
       payload.picture
     );
 
-    // Configura la cookie HTTP-only segura
+    console.log('Usuario autenticado con Google:', {
+      id: user.id,
+      email: user.email,
+      role: user.role
+    });
+
+    // Configurar la cookie HTTP-only segura
     res.cookie('token', jwtToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 días
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 días
+      path: '/',
+      domain: process.env.NODE_ENV === 'production' ? '.tudominio.com' : undefined
     });
     
+    // Responder con los datos del usuario y el token
     res.status(200).json({ 
       success: true, 
       data: { 
@@ -240,12 +262,25 @@ return next(createError('Token de Google inválido', 400, ERROR_TYPES.UNAUTHORIZ
           name: user.name,
           email: user.email,
           role: user.role,
-          avatar_url: user.avatar_url
+          avatar_url: user.avatar_url,
+          email_verified: user.email_verified,
+          created_at: user.created_at,
+          updated_at: user.updated_at
         }
       } 
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error en login con Google:', error);
-    next(createError('Error al autenticar con Google', 500, ERROR_TYPES.INTERNAL_SERVER_ERROR));
+    
+    // Manejar diferentes tipos de errores
+    if (error.message?.includes('ya está registrado con otro método de autenticación')) {
+      return next(createError(error.message, 400, 'AUTH_ERROR'));
+    }
+    
+    if (error.name === 'TokenError') {
+      return next(createError('Token de Google inválido o expirado', 401, 'AUTH_ERROR'));
+    }
+    
+    next(createError('Error al autenticar con Google', 500, 'INTERNAL_SERVER_ERROR'));
   }
 };

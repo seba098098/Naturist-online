@@ -1,10 +1,147 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
+model users {
+  id             Int          @id @default(autoincrement())
+  name           String
+  email          String       @unique
+  password_hash  String       @default("")  
+  role           Role         @default(USER)
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
+  avatar_url     String?      @db.Text
+  email_verified Boolean      @default(false)
+  auth_provider  AuthProvider @default(LOCAL)
+
+  addresses      addresses[]
+  cart_items     cart_items[]
+  orders         orders[]
+  questions      questions[]
+  reviews        reviews[]
+  sales          sales[]
+
+  @@map("users")
+}
+
+model categories {
+  id         Int        @id @default(autoincrement())
+  name       String
+  slug       String     @unique
+  created_at DateTime   @default(now())
+  updated_at DateTime   @updatedAt
+  products   products[]
+}
+
+model products {
+  id          Int              @id @default(autoincrement())
+  name        String
+  slug        String           @unique
+  description String?
+  price       Float
+  stock       Int              @default(0)
+  categoryId  Int
+  created_at  DateTime         @default(now())
+  updated_at  DateTime         @updatedAt
+  cart_items  cart_items[]
+  order_items order_items[]
+  images      product_images[]
+  category    categories       @relation(fields: [categoryId], references: [id])
+  questions   questions[]
+  reviews     reviews[]
+}
+
+model product_images {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  url       String
+  product   products @relation(fields: [productId], references: [id])
+}
+
+model cart_items {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  productId Int
+  quantity  Int      @default(1)
+  product   products @relation(fields: [productId], references: [id])
+  user      users    @relation(fields: [userId], references: [id])
+}
+
+model orders {
+  id          Int           @id @default(autoincrement())
+  userId      Int
+  status      OrderStatus   @default(PENDING)
+  total       Float
+  addressId   Int
+  created_at  DateTime      @default(now())
+  updated_at  DateTime      @updatedAt
+  order_items order_items[]
+  address     addresses     @relation(fields: [addressId], references: [id])
+  user        users         @relation(fields: [userId], references: [id])
+  sales       sales?
+}
+
+model addresses {
+  id            Int          @id @default(autoincrement())
+  userId        Int
+  country       String
+  city          String
+  street        String
+  postal_code   String
+  name          String
+  cedula        String
+  phone         String
+  municipio     String
+  delivery_type DeliveryType
+  user          users        @relation(fields: [userId], references: [id])
+  orders        orders[]
+}
+
+model reviews {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  productId  Int
+  rating     Int      @db.SmallInt
+  comment    String?
+  created_at DateTime @default(now())
+  product    products @relation(fields: [productId], references: [id])
+  user       users    @relation(fields: [userId], references: [id])
+}
+
+model questions {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  productId  Int
+  question   String
+  answer     String?
+  created_at DateTime @default(now())
+  product    products @relation(fields: [productId], references: [id])
+  user       users    @relation(fields: [userId], references: [id])
+}
+
+model order_items {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  productId Int
+  quantity  Int
+  price     Float
+  order     orders   @relation(fields: [orderId], references: [id])
+  product   products @relation(fields: [productId], references: [id])
+}
+
+model sales {
+  id           Int      @id @default(autoincrement())
+  orderId      Int      @unique
+  userId       Int
+  sale_date    DateTime @default(now())
+  total_amount Float
+  order        orders   @relation(fields: [orderId], references: [id])
+  user         users    @relation(fields: [userId], references: [id])
 }
 
 enum Role {
@@ -22,159 +159,10 @@ enum DeliveryType {
   CASA
   OFICINA
 }
-// En la parte superior de tu archivo schema.prisma
+
 enum AuthProvider {
   LOCAL
   GOOGLE
-  FACEBOOK // opcional para futuro
-  APPLE    // opcional para futuro
-}
-
-// Modifica el modelo users
-model users {
-  id            Int         @id @default(autoincrement())
-  name          String
-  email         String      @unique
-  password_hash String
-  role          Role        @default(USER)
-  created_at    DateTime    @default(now())
-  updated_at    DateTime    @updatedAt
-
-  auth_provider AuthProvider @default(LOCAL)  // <--- nuevo campo agregado
-
-  addresses     addresses[]
-  orders        orders[]
-  cart_items    cart_items[]
-  reviews       reviews[]
-  questions     questions[]
-  sales         sales[]
-}
-
-model categories {
-  id       Int        @id @default(autoincrement())
-  name     String
-  slug     String     @unique
-  created_at DateTime  @default(now())
-  updated_at DateTime  @updatedAt
-
-  products products[]
-}
-
-model products {
-  id          Int           @id @default(autoincrement())
-  name        String
-  slug        String        @unique
-  description String?
-  price       Float
-  stock       Int           @default(0)
-  categoryId  Int
-  created_at  DateTime      @default(now())
-  updated_at  DateTime      @updatedAt
-
-  category    categories    @relation(fields: [categoryId], references: [id])
-  images      product_images[]
-  order_items order_items[]
-  cart_items  cart_items[]
-  reviews     reviews[]
-  questions   questions[]
-}
-
-model product_images {
-  id         Int      @id @default(autoincrement())
-  productId  Int
-  url        String   // ruta local tipo "/uploads/imagen.jpg"
-
-  product    products @relation(fields: [productId], references: [id])
-}
-
-model cart_items {
-  id         Int      @id @default(autoincrement())
-  userId     Int
-  productId  Int
-  quantity   Int      @default(1)
-
-  user       users    @relation(fields: [userId], references: [id])
-  product    products @relation(fields: [productId], references: [id])
-}
-
-model orders {
-  id          Int         @id @default(autoincrement())
-  userId      Int
-  status      OrderStatus @default(PENDING)
-  total       Float
-  addressId   Int
-  created_at  DateTime    @default(now())
-  updated_at  DateTime    @updatedAt
-
-  user        users       @relation(fields: [userId], references: [id])
-  address     addresses   @relation(fields: [addressId], references: [id])
-  order_items order_items[]
-
-  sales       sales?      // una venta asociada (uno a uno)
-}
-
-model addresses {
-  id            Int         @id @default(autoincrement())
-  userId        Int
-  country       String
-  city          String
-  street        String
-  postal_code   String
-  name          String      // nombre destinatario
-  cedula        String
-  phone         String
-  municipio     String
-  delivery_type DeliveryType
-
-  user          users       @relation(fields: [userId], references: [id])
-
-  // 🔧 Relación inversa agregada
-  orders        orders[]    // una dirección puede estar asociada a muchos pedidos
-}
-
-
-model reviews {
-  id         Int       @id @default(autoincrement())
-  userId     Int
-  productId  Int
-  rating     Int       @db.SmallInt
-  comment    String?
-  created_at DateTime  @default(now())
-
-  user       users     @relation(fields: [userId], references: [id])
-  product    products  @relation(fields: [productId], references: [id])
-}
-
-model questions {
-  id         Int       @id @default(autoincrement())
-  userId     Int
-  productId  Int
-  question   String
-  answer     String?
-  created_at DateTime  @default(now())
-
-  user       users     @relation(fields: [userId], references: [id])
-  product    products  @relation(fields: [productId], references: [id])
-}
-
-model order_items {
-  id         Int       @id @default(autoincrement())
-  orderId    Int
-  productId  Int
-  quantity   Int
-  price      Float
-
-  order      orders    @relation(fields: [orderId], references: [id])
-  product    products  @relation(fields: [productId], references: [id])
-}
-
-model sales {
-  id           Int       @id @default(autoincrement())
-  orderId      Int       @unique
-  userId       Int
-  sale_date    DateTime  @default(now())
-  total_amount Float
-
-  order        orders    @relation(fields: [orderId], references: [id])
-  user         users     @relation(fields: [userId], references: [id])
+  FACEBOOK
+  APPLE
 }

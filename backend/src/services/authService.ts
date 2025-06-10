@@ -32,8 +32,8 @@ type User = {
   auth_provider: AuthProvider;    // Proveedor de autenticación (LOCAL, GOOGLE, etc.)
   created_at: Date;               // Fecha de creación del usuario
   updated_at: Date;               // Fecha de última actualización
-  avatar_url?: string | null;     // URL de la imagen de perfil (opcional)
-  email_verified?: boolean;       // Indica si el correo electrónico ha sido verificado
+  avatar_url: string | null;      // URL de la imagen de perfil
+  email_verified: boolean;        // Indica si el correo electrónico ha sido verificado
 };
 
 /**
@@ -102,8 +102,21 @@ export const registerUser = async (
   // Devolver token y datos del usuario (sin la contraseña)
   const { password_hash: __, ...userWithoutPassword } = user;
   
+  // Asegurarse de que todos los campos requeridos estén presentes
+  const userResponse = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    auth_provider: user.auth_provider,
+    created_at: user.created_at,
+    updated_at: user.updated_at,
+    avatar_url: ('avatar_url' in user ? (user as any).avatar_url : null) as string | null,
+    email_verified: ('email_verified' in user ? (user as any).email_verified : false) as boolean
+  };
+  
   console.log(`[AUTH_SERVICE] Registro completado para: ${email}`);
-  return { token, user: userWithoutPassword };
+  return { token, user: userResponse };
 };
 
 /**
@@ -154,8 +167,21 @@ export const loginUser = async (
   // Devolver token y datos del usuario (sin la contraseña)
   const { password_hash, ...userWithoutPassword } = user;
   
+  // Asegurarse de que todos los campos requeridos estén presentes
+  const userResponse = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    auth_provider: user.auth_provider,
+    created_at: user.created_at,
+    updated_at: user.updated_at,
+    avatar_url: ('avatar_url' in user ? (user as any).avatar_url : null) as string | null,
+    email_verified: ('email_verified' in user ? (user as any).email_verified : false) as boolean
+  };
+  
   console.log(`[AUTH_SERVICE] Autenticación exitosa para: ${email}`);
-  return { token, user: userWithoutPassword };
+  return { token, user: userResponse };
 };
 
 /**
@@ -175,10 +201,22 @@ export const getUserProfile = async (userId: number) => {
       role: true,
       auth_provider: true,
       created_at: true,
-      updated_at: true
+      updated_at: true,
+      avatar_url: true,
+      email_verified: true
     }
   });
-  return user;
+  
+  if (!user) {
+    throw createError('Usuario no encontrado', 404, 'NOT_FOUND');
+  }
+  
+  // Asegurarse de que los campos opcionales tengan valores por defecto
+  return {
+    ...user,
+    avatar_url: user.avatar_url || null,
+    email_verified: user.email_verified ?? false
+  };
 };
 
 /**
@@ -220,47 +258,118 @@ export const findOrCreateGoogleUser = async (
   name: string, 
   avatar?: string | null
 ): Promise<AuthResponse> => {
-  // Buscar usuario existente
-  let user = await prisma.users.findUnique({ 
-    where: { email }
-  });
-  
-  // Si no existe, crearlo
-  if (!user) {
-    user = await prisma.users.create({
-      data: { 
-        name, 
-        email, 
-        password_hash: '', // Sin contraseña para autenticación por OAuth
-        auth_provider: AuthProvider.GOOGLE,
-        avatar_url: avatar || null,
-        role: 'USER', // Rol por defecto
-        email_verified: true
-      },
+  try {
+    console.log(`[AUTH_SERVICE] Buscando usuario con email: ${email}`);
+    
+    // Validar email
+    if (!email || !email.includes('@')) {
+      console.error('[AUTH_SERVICE] Error: Email no válido');
+      throw createError('El correo electrónico no es válido', 400, 'VALIDATION_ERROR');
+    }
+
+    // Buscar usuario existente
+    let user = await prisma.users.findUnique({ 
+      where: { email }
     });
-  }
-  
-  // Si el usuario existe pero con otro proveedor
-  if (user.auth_provider !== AuthProvider.GOOGLE) {
-    throw createError(
-      'Este correo ya está registrado con otro método de autenticación', 
-      400, 
-      'AUTH_ERROR'
-    );
-  }
+    
+    console.log(`[AUTH_SERVICE] Usuario ${user ? 'encontrado' : 'no encontrado'}: ${email}`);
+    
+    // Si el usuario existe pero con otro proveedor
+    if (user && user.auth_provider !== AuthProvider.GOOGLE) {
+      console.error(`[AUTH_SERVICE] Error: El correo ${email} ya está registrado con otro método de autenticación`);
+      throw createError(
+        'Este correo ya está registrado con otro método de autenticación. Por favor, inicia sesión con el método original.', 
+        400, 
+        'AUTH_ERROR'
+      );
+    }
+    
+    // Si no existe, crearlo
+    if (!user) {
+      console.log(`[AUTH_SERVICE] Creando nuevo usuario con Google: ${email}`);
+      
+      // Validar nombre
+      const displayName = name?.trim() || email.split('@')[0];
+      
+      try {
+        // Crear el usuario con los campos correctos
+        const userData: any = {
+          name: displayName,
+          email,
+          password_hash: '', // Cadena vacía para OAuth
+          role: 'USER',
+          auth_provider: AuthProvider.GOOGLE,
+          email_verified: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+          ...(avatar && { avatar_url: avatar }) // Agregar avatar_url solo si se proporciona
+        };
+        
+        user = await prisma.users.create({
+          data: userData,
+        });
+        
+        console.log(`[AUTH_SERVICE] Usuario creado exitosamente con ID: ${user.id}`);
+      } catch (error) {
+        console.error('[AUTH_SERVICE] Error al crear usuario:', error);
+        throw createError('Error al crear el usuario', 500, 'DATABASE_ERROR');
+      }
+    } else {
+      // Actualizar datos del usuario existente si es necesario
+      const updateData: any = { updated_at: new Date() };
+      
+      // Actualizar avatar si no tiene uno y se proporciona uno nuevo
+      if (!user.avatar_url && avatar) {
+        updateData.avatar_url = avatar;
+      }
+      
+      // Actualizar nombre si está vacío
+      if (!user.name || user.name === 'Usuario de Google') {
+        updateData.name = name || email.split('@')[0];
+      }
+      
+      if (Object.keys(updateData).length > 1) { // Si hay más que solo updated_at
+        try {
+          user = await prisma.users.update({
+            where: { id: user.id },
+            data: updateData
+          });
+          console.log(`[AUTH_SERVICE] Usuario actualizado: ${user.id}`);
+        } catch (error) {
+          console.error('[AUTH_SERVICE] Error al actualizar usuario:', error);
+          // No lanzamos error, continuamos con los datos existentes
+        }
+      }
+    }
 
-  // Actualizar la última vez que inició sesión
-  await prisma.users.update({
-    where: { id: user.id },
-    data: { updated_at: new Date() }
-  });
-
-  // Generar token JWT - Asegurarse de que el ID sea un string
-  const token = generateToken(user.id.toString(), user.role);
-  
-  // Devolver token y datos del usuario (sin la contraseña)
-  const { password_hash, ...userWithoutPassword } = user;
-  return { token, user: userWithoutPassword };
+    // Generar token JWT - Asegurarse de que el ID sea un string
+    console.log(`[AUTH_SERVICE] Generando token JWT para usuario ID: ${user.id}`);
+    const token = generateToken(user.id.toString(), user.role);
+    
+    // Devolver token y datos del usuario (sin la contraseña)
+    const { password_hash, ...userWithoutPassword } = user;
+    
+    // Asegurarse de que todos los campos requeridos estén presentes
+    const userResponse = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      auth_provider: user.auth_provider,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      avatar_url: ('avatar_url' in user ? (user as any).avatar_url : null) as string | null,
+      email_verified: ('email_verified' in user ? (user as any).email_verified : false) as boolean
+    };
+    
+    return { 
+      token, 
+      user: userResponse
+    };
+  } catch (error) {
+    console.error('[AUTH_SERVICE] Error en findOrCreateGoogleUser:', error);
+    throw error; // Re-lanzar el error para que lo maneje el controlador
+  }
 };
 
 /**
